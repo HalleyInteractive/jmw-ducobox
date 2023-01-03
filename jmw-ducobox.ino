@@ -7,6 +7,8 @@
 #include <ArduinoJson.h>
 #include <nvs_flash.h>
 
+#include <HardwareSerial.h>
+
 #define VERSION "0.0.1";
 
 Preferences preferences;
@@ -14,15 +16,14 @@ Preferences preferences;
 esp_mqtt_client_handle_t client;
 
 bool connected = false;
-bool birthMessagePublished = false;
-unsigned long previousMillis = 0;
+String ducoOutput = "";
 
 enum DucoCommands {
   FAN_SPEED = 0,
   FAN_PARAM_GET
 };
 
-const char * const ducoCommand[] = {
+const char *const ducoCommand[] = {
   [FAN_SPEED] = "fanspeed",
   [FAN_PARAM_GET] = "fanparaget",
 };
@@ -31,14 +32,16 @@ String discoveryTopic;
 String stateTopic;
 String commandTopic;
 
-static void log_error_if_nonzero(const char *message, int error_code)
-{
-    if (error_code != 0) {
-      // Serial.print(F("Error: "));
-      // Serial.println(message);
-      // Serial.print(F("Error Code: "));
-      // Serial.println(error_code);
-    }
+HardwareSerial LocalLog(0);
+HardwareSerial DucoConsole(1);
+
+static void log_error_if_nonzero(const char *message, int error_code) {
+  if (error_code != 0) {
+    LocalLog.print(F("Error: "));
+    LocalLog.println(message);
+    LocalLog.print(F("Error Code: "));
+    LocalLog.println(error_code);
+  }
 }
 
 // static void publishDiscoveryConfiguration() {
@@ -62,51 +65,57 @@ static void log_error_if_nonzero(const char *message, int error_code)
 //   esp_mqtt_client_publish(client, discoveryTopic.c_str(), payload.c_str(), strlen(payload.c_str()), 0, 0);
 // }
 
-static void mqtt_before_connect_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
-{
-  // Serial.println(F("MQTT Client initialized, about to connect."));
+static void mqtt_before_connect_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+  LocalLog.println(F("MQTT Client initialized, about to connect."));
 }
 
-static void mqtt_connected_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
-{
+static void mqtt_connected_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
   int msg_id = esp_mqtt_client_subscribe(client, commandTopic.c_str(), 0);
-  // Serial.println(F("MQTT Connected, subscribing to topic"));
+  LocalLog.println(F("MQTT Connected, subscribing to topic"));
   connected = true;
 }
 
-static void mqtt_disconnected_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
-{
-  // Serial.println(F("MQTT Disconnected"));
+static void mqtt_disconnected_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+  LocalLog.println(F("MQTT Disconnected"));
   connected = false;
 }
 
-static void mqtt_subscribed_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
-{
-  // Serial.println(F("MQTT subscribed to topic"));
+static void mqtt_subscribed_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+  LocalLog.println(F("MQTT subscribed to topic"));
 }
 
-static void mqtt_unsubscribed_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
-{
-  // Serial.println(F("MQTT subscribed to topic"));
+static void mqtt_unsubscribed_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+  LocalLog.println(F("MQTT subscribed to topic"));
 }
 
-static void mqtt_published_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
-{
-  // Serial.println(F("MQTT published to topic"));
+static void mqtt_published_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+  LocalLog.println(F("MQTT published to topic"));
 }
 
-static void mqtt_data_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
-{
+static void mqtt_data_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
   esp_mqtt_event_handle_t event = esp_mqtt_event_handle_t(event_data);
   char topic[event->topic_len];
   char data[event->data_len];
   memcpy(topic, event->topic, event->topic_len);
   memcpy(data, event->data, event->data_len);
-  if(commandTopic.compareTo(topic)) {
-    if(strcmp(data, ducoCommand[FAN_SPEED]) == 0) {
-      Serial.println(ducoCommand[FAN_SPEED]);
-      // publishFanSpeed();
+  if (commandTopic.compareTo(topic)) {
+    LocalLog.println("Sending data to console");
+    while(!DucoConsole.availableForWrite()) {
+      LocalLog.println("Waiting for console to be available for write...");
+      delay(50);
     }
+    DucoConsole.println(data);
+    DucoConsole.flush();
+
+    // if(strcmp(data, ducoCommand[FAN_SPEED]) == 0) {
+    // Serial.write(ducoCommand[FAN_SPEED]);
+    // Serial.write(data);
+    // Serial.write(0x0d);
+    // delay(25);
+    // Serial.write(0x0a);
+    // publishFanSpeed();
+    // Serial.println(data);
+    // }
   }
 }
 
@@ -114,114 +123,102 @@ static void publishFanSpeed() {
   esp_mqtt_client_publish(client, stateTopic.c_str(), "{\"speed\":50}", strlen("{\"speed\":50}"), 0, 0);
 }
 
-static void publishStateMessage(char* message) {
+static void publishStateMessage(char const *message) {
   esp_mqtt_client_publish(client, stateTopic.c_str(), message, strlen(message), 0, 0);
 }
 
 static void publishBirthMessage() {
-  birthMessagePublished = true;
   esp_mqtt_client_publish(client, stateTopic.c_str(), "{\"status\":\"available\"}", strlen("{\"status\":\"available\"}"), 0, 0);
 }
 
-static void mqtt_error_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
-{
+static void mqtt_error_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
   esp_mqtt_event_handle_t event = esp_mqtt_event_handle_t(event_data);
-    // Serial.println(F("MQTT Error"));
-    // if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
-    //     log_error_if_nonzero("reported from esp-tls", event->error_handle->esp_tls_last_esp_err);
-    //     log_error_if_nonzero("reported from tls stack", event->error_handle->esp_tls_stack_err);
-    //     log_error_if_nonzero("captured as transport's socket errno",  event->error_handle->esp_transport_sock_errno);
-    // }
+  LocalLog.println(F("MQTT Error"));
+  if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
+      log_error_if_nonzero("reported from esp-tls", event->error_handle->esp_tls_last_esp_err);
+      log_error_if_nonzero("reported from tls stack", event->error_handle->esp_tls_stack_err);
+      log_error_if_nonzero("captured as transport's socket errno",  event->error_handle->esp_transport_sock_errno);
+  }
 }
 
-void setup()
-{
-  Serial.begin(115200);
+void setup() {
+  LocalLog.begin(115200);
+  DucoConsole.begin(115200, SERIAL_8N1, 16, 17);
 
-    preferences.begin("sensor-hub", false);
+  preferences.begin("sensor-hub", false);
 
-    String ssid = preferences.getString("ssid");
-    String password = preferences.getString("password");
-    String mqttUri = preferences.getString("mqtt-uri");
-    unsigned int mqttPort = preferences.getUInt("mqtt-port");
-    String mqttUser = preferences.getString("mqtt-user");
-    String mqttPass = preferences.getString("mqtt-pass");
-    discoveryTopic = preferences.getString("discovery-tpc");
-    stateTopic = preferences.getString("state-tpc");
-    commandTopic = preferences.getString("command-tpc");
+  String ssid = preferences.getString("ssid");
+  String password = preferences.getString("password");
+  String mqttUri = preferences.getString("mqtt-uri");
+  unsigned int mqttPort = preferences.getUInt("mqtt-port");
+  String mqttUser = preferences.getString("mqtt-user");
+  String mqttPass = preferences.getString("mqtt-pass");
+  discoveryTopic = preferences.getString("discovery-tpc");
+  stateTopic = preferences.getString("state-tpc");
+  commandTopic = preferences.getString("command-tpc");
 
-    preferences.end();
+  preferences.end();
 
-    WiFi.mode(WIFI_STA);
-    
-    // Serial.print("ESP32 Board MAC Address:  ");
-    // Serial.println(WiFi.macAddress());
+  WiFi.mode(WIFI_STA);
 
-    // Serial.printf("Discovery Topic: %s\n\r", discoveryTopic.c_str());
-    // Serial.printf("State Topic: %s\n\r", stateTopic.c_str());
-    // Serial.printf("Command Topic: %s\n\r", commandTopic.c_str());
+  LocalLog.print("ESP32 Board MAC Address:  ");
+  LocalLog.println(WiFi.macAddress());
 
-    WiFi.begin(ssid.c_str(), password.c_str());
-    while (WiFi.status() != WL_CONNECTED)
-    {
-      delay(500);
-      // Serial.println("Connecting to WiFi..");
-    }
-    // Serial.print("Station IP Address: ");
-    // Serial.println(WiFi.localIP());
-    // Serial.print("Wi-Fi Channel: ");
-    // Serial.println(WiFi.channel());
+  LocalLog.printf("Discovery Topic: %s\n\r", discoveryTopic.c_str());
+  LocalLog.printf("State Topic: %s\n\r", stateTopic.c_str());
+  LocalLog.printf("Command Topic: %s\n\r", commandTopic.c_str());
 
-    esp_mqtt_client_config_t config = {};
-    config.uri = mqttUri.c_str();
-    config.port = mqttPort;
-    config.username = mqttUser.c_str();
-    config.password = mqttPass.c_str();
-    client = esp_mqtt_client_init(&config);
+  WiFi.begin(ssid.c_str(), password.c_str());
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    LocalLog.println("Connecting to WiFi..");
+  }
+  LocalLog.print("Station IP Address: ");
+  LocalLog.println(WiFi.localIP());
+  LocalLog.print("Wi-Fi Channel: ");
+  LocalLog.println(WiFi.channel());
 
-    esp_mqtt_client_register_event(client, MQTT_EVENT_BEFORE_CONNECT, mqtt_before_connect_hdl, NULL);
-    esp_mqtt_client_register_event(client, MQTT_EVENT_CONNECTED, mqtt_connected_hdl, NULL);
-    esp_mqtt_client_register_event(client, MQTT_EVENT_DISCONNECTED, mqtt_disconnected_hdl, NULL);
-    esp_mqtt_client_register_event(client, MQTT_EVENT_SUBSCRIBED, mqtt_subscribed_hdl, NULL);
-    esp_mqtt_client_register_event(client, MQTT_EVENT_UNSUBSCRIBED, mqtt_unsubscribed_hdl, NULL);
-    esp_mqtt_client_register_event(client, MQTT_EVENT_PUBLISHED, mqtt_published_hdl, NULL);
-    esp_mqtt_client_register_event(client, MQTT_EVENT_DATA, mqtt_data_hdl, NULL);
-    esp_mqtt_client_register_event(client, MQTT_EVENT_ERROR, mqtt_error_hdl, NULL);
+  esp_mqtt_client_config_t config = {};
+  config.uri = mqttUri.c_str();
+  config.port = mqttPort;
+  config.username = mqttUser.c_str();
+  config.password = mqttPass.c_str();
+  client = esp_mqtt_client_init(&config);
 
-    esp_mqtt_client_start(client);
-    // Serial.println("MQTT Client started");
-    // Serial.print("Connecting to: ");
-    // Serial.print(mqttUri);
-    // Serial.print(":");
-    // Serial.println(mqttPort);
+  esp_mqtt_client_register_event(client, MQTT_EVENT_BEFORE_CONNECT, mqtt_before_connect_hdl, NULL);
+  esp_mqtt_client_register_event(client, MQTT_EVENT_CONNECTED, mqtt_connected_hdl, NULL);
+  esp_mqtt_client_register_event(client, MQTT_EVENT_DISCONNECTED, mqtt_disconnected_hdl, NULL);
+  esp_mqtt_client_register_event(client, MQTT_EVENT_SUBSCRIBED, mqtt_subscribed_hdl, NULL);
+  esp_mqtt_client_register_event(client, MQTT_EVENT_UNSUBSCRIBED, mqtt_unsubscribed_hdl, NULL);
+  esp_mqtt_client_register_event(client, MQTT_EVENT_PUBLISHED, mqtt_published_hdl, NULL);
+  esp_mqtt_client_register_event(client, MQTT_EVENT_DATA, mqtt_data_hdl, NULL);
+  esp_mqtt_client_register_event(client, MQTT_EVENT_ERROR, mqtt_error_hdl, NULL);
 
-}
+  esp_mqtt_client_start(client);
 
-const unsigned int MAX_MESSAGE_LENGTH = 1024;
+  LocalLog.println("MQTT Client started");
+  LocalLog.print("Connecting to: ");
+  LocalLog.print(mqttUri);
+  LocalLog.print(":");
+  LocalLog.println(mqttPort);
 
-void loop()
-{
-  unsigned long currentMillis = millis();
-  if (currentMillis - previousMillis > 1000)
-  {
-    if (connected && !birthMessagePublished) {
-      publishBirthMessage();
-    }
-    previousMillis = currentMillis;
+  while (!connected) {
+    delay(500);
   }
 
-  while (Serial.available() > 0) {
-    static char message[MAX_MESSAGE_LENGTH];
-    static unsigned int message_pos = 0;
-    char inByte = Serial.read();
+  publishBirthMessage();
+}
 
-    if ( inByte != '\n' && (message_pos < MAX_MESSAGE_LENGTH - 1) ) {
-      message[message_pos] = inByte;
-      message_pos++;
-    } else {
-      message[message_pos] = '\0';
-      publishStateMessage(message);
-      message_pos = 0;
-    }
+void loop() {
+ while (DucoConsole.available()) {
+    LocalLog.println("Serial available, reading string...");
+    ducoOutput = DucoConsole.readString();
+    LocalLog.println("Output received: ");
+    LocalLog.println(ducoOutput);
+  }
+
+  if(ducoOutput.length() > 0) {
+    publishStateMessage(ducoOutput.c_str());
+    ducoOutput = "";
   }
 }
