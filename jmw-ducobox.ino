@@ -16,7 +16,14 @@ Preferences preferences;
 esp_mqtt_client_handle_t client;
 
 bool connected = false;
-String ducoOutput = "";
+
+static char message[1024];
+static unsigned int mIndex = 0;
+
+bool writingCommand = false;
+char command[64] = "";
+static unsigned int cIndex = 0;
+static unsigned int cLen = 0;
 
 enum DucoCommands {
   FAN_SPEED = 0,
@@ -100,22 +107,19 @@ static void mqtt_data_hdl(void *handler_args, esp_event_base_t base, int32_t eve
   memcpy(data, event->data, event->data_len);
   if (commandTopic.compareTo(topic)) {
     LocalLog.println("Sending data to console");
-    while(!DucoConsole.availableForWrite()) {
+    while (!DucoConsole.availableForWrite()) {
       LocalLog.println("Waiting for console to be available for write...");
       delay(50);
     }
-    DucoConsole.println(data);
-    DucoConsole.flush();
 
-    // if(strcmp(data, ducoCommand[FAN_SPEED]) == 0) {
-    // Serial.write(ducoCommand[FAN_SPEED]);
-    // Serial.write(data);
-    // Serial.write(0x0d);
-    // delay(25);
-    // Serial.write(0x0a);
-    // publishFanSpeed();
-    // Serial.println(data);
-    // }
+    if (!writingCommand) {
+      writingCommand = true;
+      memcpy(command, event->data, event->data_len);
+      command[event->data_len] = 0x0d;
+      command[event->data_len + 1] = 0x0a;
+      cLen = event->data_len + 2;
+      command[cLen] = '\0';
+    }
   }
 }
 
@@ -135,9 +139,9 @@ static void mqtt_error_hdl(void *handler_args, esp_event_base_t base, int32_t ev
   esp_mqtt_event_handle_t event = esp_mqtt_event_handle_t(event_data);
   LocalLog.println(F("MQTT Error"));
   if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
-      log_error_if_nonzero("reported from esp-tls", event->error_handle->esp_tls_last_esp_err);
-      log_error_if_nonzero("reported from tls stack", event->error_handle->esp_tls_stack_err);
-      log_error_if_nonzero("captured as transport's socket errno",  event->error_handle->esp_transport_sock_errno);
+    log_error_if_nonzero("reported from esp-tls", event->error_handle->esp_tls_last_esp_err);
+    log_error_if_nonzero("reported from tls stack", event->error_handle->esp_tls_stack_err);
+    log_error_if_nonzero("captured as transport's socket errno", event->error_handle->esp_transport_sock_errno);
   }
 }
 
@@ -145,7 +149,7 @@ void setup() {
   LocalLog.begin(115200);
   DucoConsole.begin(115200, SERIAL_8N1, 16, 17);
 
-  preferences.begin("sensor-hub", false);
+  preferences.begin("sensor-hub", true);
 
   String ssid = preferences.getString("ssid");
   String password = preferences.getString("password");
@@ -156,6 +160,27 @@ void setup() {
   discoveryTopic = preferences.getString("discovery-tpc");
   stateTopic = preferences.getString("state-tpc");
   commandTopic = preferences.getString("command-tpc");
+
+  LocalLog.println("-------- SETTINGS --------");
+  LocalLog.print("SSID: ");
+  LocalLog.println(ssid);
+  LocalLog.print("PASSWORD: ");
+  LocalLog.println(password);
+  LocalLog.print("URI: ");
+  LocalLog.println(mqttUri);
+  LocalLog.print("PORT: ");
+  LocalLog.println(mqttPort);
+  LocalLog.print("USER: ");
+  LocalLog.println(mqttUser);
+  LocalLog.print("PWD: ");
+  LocalLog.println(mqttPass);
+  LocalLog.print("DISC: ");
+  LocalLog.println(discoveryTopic);
+  LocalLog.print("STATE: ");
+  LocalLog.println(stateTopic);
+  LocalLog.print("CMD: ");
+  LocalLog.println(commandTopic);
+  LocalLog.println("-------- END SETTINGS --------");
 
   preferences.end();
 
@@ -180,7 +205,7 @@ void setup() {
 
   esp_mqtt_client_config_t config = {};
   config.uri = mqttUri.c_str();
-  config.port = mqttPort;
+  config.port = 1883;
   config.username = mqttUser.c_str();
   config.password = mqttPass.c_str();
   client = esp_mqtt_client_init(&config);
@@ -209,16 +234,44 @@ void setup() {
   publishBirthMessage();
 }
 
-void loop() {
- while (DucoConsole.available()) {
-    LocalLog.println("Serial available, reading string...");
-    ducoOutput = DucoConsole.readString();
-    LocalLog.println("Output received: ");
-    LocalLog.println(ducoOutput);
-  }
 
-  if(ducoOutput.length() > 0) {
-    publishStateMessage(ducoOutput.c_str());
-    ducoOutput = "";
+
+void loop() {
+  if (writingCommand) {
+    DucoConsole.write(command[cIndex]);
+    cIndex++;
+    if (cIndex == cLen) {
+      writingCommand = false;
+      cLen = 0;
+      cIndex = 0;
+      command[0] = '\0';
+    }
+    delay(20);
+  } else {
+    while (DucoConsole.available()) {
+      char byte = DucoConsole.read();
+      switch (byte) {
+        case 0x3e: // >
+          LocalLog.println("\n> found, clearing space.");
+          mIndex = 0;
+
+          message[mIndex] = '\0'; // Clear array;
+          DucoConsole.read(); // Clear space
+          break;
+        case 0x0d: // CR
+          LocalLog.println("\nCR, publishing message.");
+          message[mIndex] = '\0';
+          publishStateMessage(message);
+          
+          mIndex = 0;
+          message[mIndex] = '\0'; // Clear array;
+          break;
+        default:
+          LocalLog.write(byte);
+          message[mIndex] = byte;
+          mIndex++;
+          break;
+      }
+    }
   }
 }
