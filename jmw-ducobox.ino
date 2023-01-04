@@ -25,14 +25,15 @@ char command[64] = "";
 static unsigned int cIndex = 0;
 static unsigned int cLen = 0;
 
-enum DucoCommands {
+enum DucoCommands
+{
   FAN_SPEED = 0,
   FAN_PARAM_GET
 };
 
 const char *const ducoCommand[] = {
-  [FAN_SPEED] = "fanspeed",
-  [FAN_PARAM_GET] = "fanparaget",
+    [FAN_SPEED] = "fanspeed",
+    [FAN_PARAM_GET] = "fanparaget",
 };
 
 String discoveryTopic;
@@ -42,8 +43,10 @@ String commandTopic;
 HardwareSerial LocalLog(0);
 HardwareSerial DucoConsole(1);
 
-static void log_error_if_nonzero(const char *message, int error_code) {
-  if (error_code != 0) {
+static void log_error_if_nonzero(const char *message, int error_code)
+{
+  if (error_code != 0)
+  {
     LocalLog.print(F("Error: "));
     LocalLog.println(message);
     LocalLog.print(F("Error Code: "));
@@ -72,47 +75,57 @@ static void log_error_if_nonzero(const char *message, int error_code) {
 //   esp_mqtt_client_publish(client, discoveryTopic.c_str(), payload.c_str(), strlen(payload.c_str()), 0, 0);
 // }
 
-static void mqtt_before_connect_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+static void mqtt_before_connect_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
   LocalLog.println(F("MQTT Client initialized, about to connect."));
 }
 
-static void mqtt_connected_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+static void mqtt_connected_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
   int msg_id = esp_mqtt_client_subscribe(client, commandTopic.c_str(), 0);
   LocalLog.println(F("MQTT Connected, subscribing to topic"));
   connected = true;
 }
 
-static void mqtt_disconnected_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+static void mqtt_disconnected_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
   LocalLog.println(F("MQTT Disconnected"));
   connected = false;
 }
 
-static void mqtt_subscribed_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+static void mqtt_subscribed_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
   LocalLog.println(F("MQTT subscribed to topic"));
 }
 
-static void mqtt_unsubscribed_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+static void mqtt_unsubscribed_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
   LocalLog.println(F("MQTT subscribed to topic"));
 }
 
-static void mqtt_published_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+static void mqtt_published_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
   LocalLog.println(F("MQTT published to topic"));
 }
 
-static void mqtt_data_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+static void mqtt_data_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
   esp_mqtt_event_handle_t event = esp_mqtt_event_handle_t(event_data);
   char topic[event->topic_len];
   char data[event->data_len];
   memcpy(topic, event->topic, event->topic_len);
   memcpy(data, event->data, event->data_len);
-  if (commandTopic.compareTo(topic)) {
+  if (commandTopic.compareTo(topic))
+  {
     LocalLog.println("Sending data to console");
-    while (!DucoConsole.availableForWrite()) {
+    while (!DucoConsole.availableForWrite())
+    {
       LocalLog.println("Waiting for console to be available for write...");
       delay(50);
     }
 
-    if (!writingCommand) {
+    if (!writingCommand)
+    {
       writingCommand = true;
       memcpy(command, event->data, event->data_len);
       command[event->data_len] = 0x0d;
@@ -123,29 +136,35 @@ static void mqtt_data_hdl(void *handler_args, esp_event_base_t base, int32_t eve
   }
 }
 
-static void publishFanSpeed() {
+static void publishFanSpeed()
+{
   esp_mqtt_client_publish(client, stateTopic.c_str(), "{\"speed\":50}", strlen("{\"speed\":50}"), 0, 0);
 }
 
-static void publishStateMessage(char const *message) {
+static void publishStateMessage(char const *message)
+{
   esp_mqtt_client_publish(client, stateTopic.c_str(), message, strlen(message), 0, 0);
 }
 
-static void publishBirthMessage() {
+static void publishBirthMessage()
+{
   esp_mqtt_client_publish(client, stateTopic.c_str(), "{\"status\":\"available\"}", strlen("{\"status\":\"available\"}"), 0, 0);
 }
 
-static void mqtt_error_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
+static void mqtt_error_hdl(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
+{
   esp_mqtt_event_handle_t event = esp_mqtt_event_handle_t(event_data);
   LocalLog.println(F("MQTT Error"));
-  if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT) {
+  if (event->error_handle->error_type == MQTT_ERROR_TYPE_TCP_TRANSPORT)
+  {
     log_error_if_nonzero("reported from esp-tls", event->error_handle->esp_tls_last_esp_err);
     log_error_if_nonzero("reported from tls stack", event->error_handle->esp_tls_stack_err);
     log_error_if_nonzero("captured as transport's socket errno", event->error_handle->esp_transport_sock_errno);
   }
 }
 
-void setup() {
+void setup()
+{
   LocalLog.begin(115200);
   DucoConsole.begin(115200, SERIAL_8N1, 16, 17);
 
@@ -194,7 +213,8 @@ void setup() {
   LocalLog.printf("Command Topic: %s\n\r", commandTopic.c_str());
 
   WiFi.begin(ssid.c_str(), password.c_str());
-  while (WiFi.status() != WL_CONNECTED) {
+  while (WiFi.status() != WL_CONNECTED)
+  {
     delay(500);
     LocalLog.println("Connecting to WiFi..");
   }
@@ -227,50 +247,56 @@ void setup() {
   LocalLog.print(":");
   LocalLog.println(mqttPort);
 
-  while (!connected) {
+  while (!connected)
+  {
     delay(500);
   }
 
   publishBirthMessage();
 }
 
-
-
-void loop() {
-  if (writingCommand) {
+void loop()
+{
+  if (writingCommand)
+  {
     DucoConsole.write(command[cIndex]);
     cIndex++;
-    if (cIndex == cLen) {
+    if (cIndex == cLen)
+    {
       writingCommand = false;
       cLen = 0;
       cIndex = 0;
       command[0] = '\0';
     }
     delay(20);
-  } else {
-    while (DucoConsole.available()) {
+  }
+  else
+  {
+    while (DucoConsole.available())
+    {
       char byte = DucoConsole.read();
-      switch (byte) {
-        case 0x3e: // >
-          LocalLog.println("\n> found, clearing space.");
-          mIndex = 0;
+      switch (byte)
+      {
+      case 0x3e: // >
+        LocalLog.println("\n> found, clearing space.");
+        mIndex = 0;
 
-          message[mIndex] = '\0'; // Clear array;
-          DucoConsole.read(); // Clear space
-          break;
-        case 0x0d: // CR
-          LocalLog.println("\nCR, publishing message.");
-          message[mIndex] = '\0';
-          publishStateMessage(message);
-          
-          mIndex = 0;
-          message[mIndex] = '\0'; // Clear array;
-          break;
-        default:
-          LocalLog.write(byte);
-          message[mIndex] = byte;
-          mIndex++;
-          break;
+        message[mIndex] = '\0'; // Clear array;
+        DucoConsole.read();     // Clear space
+        break;
+      case 0x0d: // CR
+        LocalLog.println("\nCR, publishing message.");
+        message[mIndex] = '\0';
+        publishStateMessage(message);
+
+        mIndex = 0;
+        message[mIndex] = '\0'; // Clear array;
+        break;
+      default:
+        LocalLog.write(byte);
+        message[mIndex] = byte;
+        mIndex++;
+        break;
       }
     }
   }
